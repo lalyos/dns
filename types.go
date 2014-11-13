@@ -365,11 +365,25 @@ type PTR struct {
 	Ptr string `dns:"cdomain-name"`
 }
 
-func (rr *PTR) Header() *RR_Header { return &rr.Hdr }
-func (rr *PTR) copy() RR           { return &PTR{*rr.Hdr.copyHeader(), rr.Ptr} }
-func (rr *PTR) len() int           { l := len(rr.Ptr) + 1; return rr.Hdr.len() + l }
+func (rr *PTR) Header() *RR_Header {
+	fmt.Println("[MUX::PTR] Header()")
+	return &rr.Hdr
+}
+func (rr *PTR) copy() RR {
+	fmt.Println("[MUX::PTR] copy()")
+	return &PTR{*rr.Hdr.copyHeader(), rr.Ptr}
+}
+func (rr *PTR) len() int {
+	fmt.Println("[MUX::PTR] len()")
+	l := len(rr.Ptr) + 1
+
+	len := rr.Hdr.len() + l
+	fmt.Println("[MUX::PTR] len()=", len)
+	return rr.Hdr.len() + l
+}
 
 func (rr *PTR) String() string {
+	fmt.Println("[MUX::PTR] String()")
 	return rr.Hdr.String() + sprintName(rr.Ptr)
 }
 
@@ -423,14 +437,23 @@ type TXT struct {
 	Txt []string `dns:"txt"`
 }
 
-func (rr *TXT) Header() *RR_Header { return &rr.Hdr }
+func (rr *TXT) Header() *RR_Header {
+	fmt.Println("[MUX::TXT] Header()")
+	return &rr.Hdr
+}
+
 func (rr *TXT) copy() RR {
+	fmt.Println("[MUX::TXT] copy()")
+
 	cp := make([]string, len(rr.Txt), cap(rr.Txt))
 	copy(cp, rr.Txt)
 	return &TXT{*rr.Hdr.copyHeader(), cp}
 }
 
-func (rr *TXT) String() string { return rr.Hdr.String() + sprintTxt(rr.Txt) }
+func (rr *TXT) String() string {
+	fmt.Println("[MUX::TXT] String() ")
+	return rr.Hdr.String() + sprintTxt(rr.Txt)
+}
 
 func sprintName(s string) string {
 	src := []byte(s)

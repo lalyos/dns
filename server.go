@@ -4,6 +4,7 @@ package dns
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -105,6 +106,7 @@ func ActivateAndServe(l net.Listener, p net.PacketConn, handler Handler) error {
 }
 
 func (mux *ServeMux) match(q string, t uint16) Handler {
+	fmt.Println("[MUX]", q, t)
 	mux.m.RLock()
 	defer mux.m.RUnlock()
 	var handler Handler
@@ -123,6 +125,8 @@ func (mux *ServeMux) match(q string, t uint16) Handler {
 			if t != TypeDS {
 				return h
 			} else {
+				fmt.Println("[MUX] handler found for:", string(b[:l]))
+
 				// Continue for DS to see if we have a parent too, if so delegeate to the parent
 				handler = h
 			}
@@ -134,6 +138,8 @@ func (mux *ServeMux) match(q string, t uint16) Handler {
 	}
 	// Wildcard match, if we have found nothing try the root zone as a last resort.
 	if h, ok := mux.z["."]; ok {
+		fmt.Println("[MUX] wildcard match")
+
 		return h
 	}
 	return handler
@@ -174,13 +180,19 @@ func (mux *ServeMux) HandleRemove(pattern string) {
 func (mux *ServeMux) ServeDNS(w ResponseWriter, request *Msg) {
 	var h Handler
 	if len(request.Question) != 1 {
+		fmt.Println("[MUX] failedHandler()")
 		h = failedHandler()
 	} else {
+
 		if h = mux.match(request.Question[0].Name, request.Question[0].Qtype); h == nil {
+			fmt.Println("[MUX] failedHandler()")
 			h = failedHandler()
 		}
 	}
+
+	fmt.Println("[MUX] BEFORE")
 	h.ServeDNS(w, request)
+	fmt.Println("[MUX] AFTER")
 }
 
 // Handle registers the handler with the given pattern
@@ -437,9 +449,11 @@ func (srv *Server) serve(a net.Addr, h Handler, m []byte, u *net.UDPConn, s *ses
 		}
 	}()
 Redo:
+	fmt.Println("[MUX] Redo:")
 	req := new(Msg)
 	err := req.Unpack(m)
 	if err != nil { // Send a FormatError back
+		fmt.Println("[MUX] FormatError:")
 		x := new(Msg)
 		x.SetRcodeFormatError(req)
 		w.WriteMsg(x)
@@ -448,7 +462,11 @@ Redo:
 
 	w.tsigStatus = nil
 	if w.tsigSecret != nil {
+		fmt.Println("[MUX] sigSecret:")
+
 		if t := req.IsTsig(); t != nil {
+			fmt.Println("[MUX] Tsig:")
+
 			secret := t.Hdr.Name
 			if _, ok := w.tsigSecret[secret]; !ok {
 				w.tsigStatus = ErrKeyAlg
@@ -458,28 +476,44 @@ Redo:
 			w.tsigRequestMAC = req.Extra[len(req.Extra)-1].(*TSIG).MAC
 		}
 	}
+	fmt.Println("[MUX] BBBBBBEFORE")
 	h.ServeDNS(w, req) // Writes back to the client
+	fmt.Println("[MUX] AAAAAAAFTER")
 
 Exit:
+	fmt.Println("[MUX] Exit:")
+
 	if w.hijacked {
+		fmt.Println("[MUX] hijacked:")
+
 		return // client calls Close()
 	}
 	if u != nil { // UDP, "close" and return
+		fmt.Println("[MUX] close:")
+
 		w.Close()
 		return
 	}
 	idleTimeout := tcpIdleTimeout
 	if srv.IdleTimeout != nil {
+		fmt.Println("[MUX] timeout:")
+
 		idleTimeout = srv.IdleTimeout()
 	}
 	m, e := srv.readTCP(w.tcp, idleTimeout)
 	if e == nil {
+		fmt.Println("[MUX] q++:")
+
 		q++
 		// TODO(miek): make this number configurable?
 		if q > 128 { // close socket after this many queries
+			fmt.Println("[MUX] too many 128:")
+
 			w.Close()
 			return
 		}
+		fmt.Println("[MUX] goto Redo:")
+
 		goto Redo
 	}
 	w.Close()
@@ -537,8 +571,10 @@ func (srv *Server) readUDP(conn *net.UDPConn, timeout time.Duration) ([]byte, *s
 
 // WriteMsg implements the ResponseWriter.WriteMsg method.
 func (w *response) WriteMsg(m *Msg) (err error) {
+	fmt.Printf("[MUX] WriteMsg: %#v\n", m)
 	var data []byte
 	if w.tsigSecret != nil { // if no secrets, dont check for the tsig (which is a longer check)
+		fmt.Println("[MUX] tsigSecret")
 		if t := m.IsTsig(); t != nil {
 			data, w.tsigRequestMAC, err = TsigGenerate(m, w.tsigSecret[t.Hdr.Name], w.tsigRequestMAC, w.tsigTimersOnly)
 			if err != nil {
@@ -549,7 +585,9 @@ func (w *response) WriteMsg(m *Msg) (err error) {
 		}
 	}
 	data, err = m.Pack()
+	fmt.Printf("[MUX] m.Pack() data=%#v err: %s\n", data, err)
 	if err != nil {
+		fmt.Println("[MUX] PACK ERROR")
 		return err
 	}
 	_, err = w.Write(data)
@@ -558,18 +596,30 @@ func (w *response) WriteMsg(m *Msg) (err error) {
 
 // Write implements the ResponseWriter.Write method.
 func (w *response) Write(m []byte) (int, error) {
+	fmt.Println("[MUX] RespWriter.Write()")
+
 	switch {
 	case w.udp != nil:
+		fmt.Println("[MUX] RespWriter.Write() 1")
+
 		n, err := writeToSessionUDP(w.udp, m, w.udpSession)
 		return n, err
 	case w.tcp != nil:
+		fmt.Println("[MUX] RespWriter.Write() 2")
+
 		lm := len(m)
 		if lm < 2 {
+			fmt.Println("[MUX] RespWriter.Write() 3")
+
 			return 0, io.ErrShortBuffer
 		}
 		if lm > MaxMsgSize {
+			fmt.Println("[MUX] RespWriter.Write() 4")
+
 			return 0, &Error{err: "message too large"}
 		}
+		fmt.Println("[MUX] RespWriter.Write() 5")
+
 		l := make([]byte, 2, 2+lm)
 		l[0], l[1] = packUint16(uint16(lm))
 		m = append(l, m...)
@@ -577,6 +627,8 @@ func (w *response) Write(m []byte) (int, error) {
 		n, err := io.Copy(w.tcp, bytes.NewReader(m))
 		return int(n), err
 	}
+	fmt.Println("[MUX] RespWriter.Write() 6")
+
 	panic("not reached")
 }
 
@@ -602,6 +654,7 @@ func (w *response) Hijack() { w.hijacked = true }
 
 // Close implements the ResponseWriter.Close method
 func (w *response) Close() error {
+	fmt.Println("[MUX] RespWriter.Close()")
 	// Can't close the udp conn, as that is actually the listener.
 	if w.tcp != nil {
 		e := w.tcp.Close()
